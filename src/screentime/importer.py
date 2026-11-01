@@ -35,6 +35,17 @@ def enabled_sources(settings: Settings) -> list[Source]:
         from .sources.knowledgec import KnowledgeCSource
 
         sources.append(KnowledgeCSource(KNOWLEDGEC_DB))
+    if settings.sources.get("biome_local", True):
+        # This Mac from Biome; takes over only once knowledgeC stops (macOS 26).
+        from .sources.biome_local import MacBiomeSource
+
+        sources.append(
+            MacBiomeSource(
+                LIBRARY,
+                KNOWLEDGEC_DB,
+                after_knowledgec=settings.sources.get("knowledgec", True),
+            )
+        )
     return sources
 
 

@@ -117,27 +117,33 @@ class KnowledgeCSource:
         return events, state
 
     def _query(self, since: float) -> list[tuple[str, float, float, float]]:
-        wal = self.db_path.with_name(self.db_path.name + "-wal")
-        error: Exception | None = None
-        for _ in range(COPY_ATTEMPTS):
-            with tempfile.TemporaryDirectory(prefix="screentime-kc-") as tmp:
-                copy = Path(tmp) / "knowledgeC.db"
-                before = _signature(self.db_path)
-                shutil.copyfile(self.db_path, copy)
-                if wal.exists():
-                    shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
-                if _signature(self.db_path) != before:
-                    error = OSError("knowledgeC.db changed while copying")
-                    continue
-                conn = sqlite3.connect(copy)
-                try:
-                    return list(conn.execute(QUERY, (since,)))
-                except sqlite3.DatabaseError as exc:
-                    error = exc
-                finally:
-                    conn.close()
-        assert error is not None
-        raise error
+        return query_copy(self.db_path, QUERY, (since,))
+
+
+def query_copy(db_path: Path, sql: str, params: tuple[Any, ...] = ()) -> list[Any]:
+    """Run ``sql`` on a private copy of a live knowledgeC database (see module doc)."""
+    db_path = Path(db_path)
+    wal = db_path.with_name(db_path.name + "-wal")
+    error: Exception | None = None
+    for _ in range(COPY_ATTEMPTS):
+        with tempfile.TemporaryDirectory(prefix="screentime-kc-") as tmp:
+            copy = Path(tmp) / "knowledgeC.db"
+            before = _signature(db_path)
+            shutil.copyfile(db_path, copy)
+            if wal.exists():
+                shutil.copyfile(wal, copy.with_name(copy.name + "-wal"))
+            if _signature(db_path) != before:
+                error = OSError("knowledgeC.db changed while copying")
+                continue
+            conn = sqlite3.connect(copy)
+            try:
+                return list(conn.execute(sql, params))
+            except sqlite3.DatabaseError as exc:
+                error = exc
+            finally:
+                conn.close()
+    assert error is not None
+    raise error
 
 
 def _signature(path: Path) -> tuple[int, int]:

@@ -17,7 +17,7 @@ from .exporter import ExportResult, export_all
 from .health import denied_sources, doctor, status
 from .importer import enabled_sources, reclassify, sync_sources
 from .locking import LockBusyError, db_lock_path, process_lock
-from . import launchd, report, wizard
+from . import launchd, report, web, wizard
 from .taxonomy import (
     apply_overrides,
     classify,
@@ -64,6 +64,11 @@ def _pipeline(conn: sqlite3.Connection, settings: Settings, *, export: bool) -> 
             else None,
         )
         exports = export_all(conn, settings) if export else ExportResult()
+        web_result = (
+            web.sync(conn)
+            if settings.sources.get("web", True)
+            else {"web_visits_read": 0, "web_errors": []}
+        )
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         conn.execute(
@@ -78,6 +83,7 @@ def _pipeline(conn: sqlite3.Connection, settings: Settings, *, export: bool) -> 
         *(f"{path}: Operation not permitted" for path in denied_sources(settings)),
         *imports.errors,
         *exports.errors,
+        *web_result["web_errors"],
     ]
     if imports.sources_failed and not imports.sources_ok:
         run_status = "failed"
@@ -91,6 +97,7 @@ def _pipeline(conn: sqlite3.Connection, settings: Settings, *, export: bool) -> 
         "days_rebuilt": imports.days_rebuilt,
         "influx_status": exports.influx_status,
         "ha_status": exports.ha_status,
+        "web_visits_read": web_result["web_visits_read"],
     }
     conn.execute(
         """UPDATE runs SET status=?, finished_at=?, events_read=?, events_inserted=?,
@@ -210,6 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_parser("setup", help="interactive setup and launchd agent")
     )
     report.add_commands(sub)
+    web.add_command(sub)
     return parser
 
 
@@ -262,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         "export": lambda conn: _export(conn, settings, args.from_date),
         "remap": lambda conn: _remap(conn, settings),
         "apps": lambda conn: _apps_unknown(conn, args.limit),
+        "web": lambda conn: web.run(args, conn, settings.timezone),
     }
     return _locked(settings, actions[args.command])
 
